@@ -5,6 +5,7 @@ import { sendVerificationEmail } from "../services/emailService";
 import dotenv from "dotenv";
 import { IUserRequest } from "../Interfaces/userRequest";
 import User from "../models/user";
+import { ITokenRequest } from "../Interfaces/tokenRequest";
 
 dotenv.config();
 
@@ -114,46 +115,64 @@ router.post(
   }
 );
 
-router.post(
-  "/login",
-  async (req: IUserRequest, res: Response): Promise<void> => {
-    const { email, password } = req.body;
+router.post("/login", async (req: IUserRequest, res: Response): Promise<void> => {
+  const { email, password } = req.body;
 
-    try {
-      const user = await User.findOne({ where: { email } });
-      if (!user) {
-        res.status(401).json({ message: "Usuario não encontrado" });
-        return;
-      }
-
-      if (!user.isVerified) {
-        res
-          .status(401)
-          .json({
-            message: "Por favor, verifique seu e-mail antes de fazer login",
-          });
-        return;
-      }
-
-      if (!(await bcrypt.compare(password, user.password))) {
-        res.status(401).json({ message: "Senha invalida" });
-        return;
-      }
-
-      const jwtSecret = process.env.JWT_SECRET;
-      if (!jwtSecret) {
-        throw new Error("sem token");
-      }
-
-      const token = jwt.sign({ userId: user.id }, jwtSecret, {
-        expiresIn: "1h",
-      });
-      res.json({ token });
-    } catch (error) {
-      console.error("Erro no login:", error);
-      res.status(500).json({ message: "Erro no login" });
+  try {
+    const user = await User.findOne({ where: { email } });
+    if (!user) {
+      res.status(401).json({ message: "Usuario não encontrado" });
+      return;
     }
+
+    if (!user.isVerified) {
+      res.status(401).json({ message: "Email não cadastrado" });
+      return;
+    }
+
+    if (!(await bcrypt.compare(password, user.password))) {
+      res.status(401).json({ message: "Senha invalida" });
+      return;
+    }
+
+    const jwtSecret = process.env.JWT_SECRET;
+    if (!jwtSecret) {
+      throw new Error("sem token");
+    }
+
+    const token = jwt.sign(
+      { userId: user.id, name: user.name, email: user.email },
+      jwtSecret,
+      { expiresIn: "1h" }
+    );
+
+    res.json({ token });
+  } catch (error) {
+    console.error("Erro no login:", error);
+    res.status(500).json({ message: "Erro no login" });
   }
-);
+});
+
+router.get('/verify-token', async (req: ITokenRequest, res: Response): Promise<void> => {
+  const token = req.headers.authorization?.split(' ')[1];
+
+  if (!token) {
+    res.status(401).json({ message: 'Token não fornecido.' });
+    return;
+  }
+
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET!) as { userId: string; name: string; email: string };
+    
+    res.status(200).json({
+      valid: true,
+      userId: decoded.userId,
+      name: decoded.name,
+      email: decoded.email,
+    });
+  } catch (error) {
+    res.status(401).json({ valid: false, message: 'Token inválido ou expirado.' });
+  }
+});
 
 export default router;
