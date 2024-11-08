@@ -11,16 +11,13 @@ dotenv.config();
 
 const router = express.Router();
 
-
-const verificationCodes: { [key: string]: { code: number; expires: number } } =
-  {};
-
+const verificationCodes: { [key: string]: { code: number; expires: number } } = {};
 
 const generateVerificationCode = (): number =>
   Math.floor(100000 + Math.random() * 900000);
 
 const validateVerificationCode = (email: string, verificationCode: string) => {
-  const storedCode = verificationCodes[email];
+  const storedCode = verificationCodes[email.toLowerCase()];
   if (
     !storedCode ||
     storedCode.code !== Number(verificationCode) ||
@@ -29,16 +26,67 @@ const validateVerificationCode = (email: string, verificationCode: string) => {
     throw new Error("Código de verificação inválido ou expirado");
   }
 };
+const checkIfEmailExists = async (email: string): Promise<boolean> => {
+  const existingUser = await User.findOne({
+    where: { email: email.toLowerCase() },
+  });
+  return !!existingUser;
+};
+
 router.post(
   "/validate-code",
   async (req: Request, res: Response): Promise<void> => {
     const { email, verificationCode } = req.body;
 
+    if (isNaN(Number(verificationCode))) {
+      res.status(400).json({ message: "Codigo de verificação invalido." });
+      return;
+    }
+
     try {
-      validateVerificationCode(email, verificationCode); 
-      res.status(200).json({ message: "Código de verificação válido." });
+      validateVerificationCode(email, verificationCode);
+      res.status(200).json({ message: "Codigo de verificação valido." });
     } catch (err: any) {
-      res.status(400).json({ message: err.message }); 
+      res.status(400).json({ message: err.message });
+    }
+  }
+);
+
+router.post(
+  "/register",
+  async (req: Request, res: Response): Promise<void> => {
+    const { name, email, password } = req.body;
+
+    if (!name || !email || !password) {
+      res.status(400).json({ message: "Por favor, preencha todos os campos obrigatorios" });
+      return;
+    }
+
+    if (!verificationCodes[email.toLowerCase()]) {
+      res.status(400).json({
+        message: "Email não verificado. Por favor, valide seu e-mail.",
+      });
+      return;
+    }
+
+    try {
+      const emailExists = await checkIfEmailExists(email);
+      if (emailExists) {
+        res.status(409).json({ message: "E-mail já cadastrado." });
+        return;
+      }
+      const hashedPassword = await bcrypt.hash(password, 10);
+      const user = await User.create({
+        name,
+        email: email.toLowerCase(),
+        password: hashedPassword,
+        isVerified: true,
+      });
+
+      delete verificationCodes[email.toLowerCase()];
+      res.status(201).json({ message: "Usuario criado com sucesso", user });
+    } catch (error) {
+      res.status(500).json({ message: "Erro ao criar usuario" });
     }
   }
 );
@@ -49,68 +97,34 @@ router.post(
     const { email } = req.body;
 
     if (!email) {
-      res.status(400).json({ message: "Email é necessário" });
+      res.status(400).json({ message: "Email é necessario" });
+      return;
+    }
+
+    try {
+      const emailExists = await checkIfEmailExists(email);
+      if (emailExists) {
+        res.status(409).json({ message: "E-mail já cadastrado." });
+        return;
+      }
+    } catch (error) {
+      res.status(500).json({ message: "Erro ao verificar o e-mail" });
       return;
     }
 
     const verificationCode = generateVerificationCode();
-
-    verificationCodes[email] = {
+    verificationCodes[email.toLowerCase()] = { 
       code: verificationCode,
-      expires: Date.now() + 10 * 60 * 1000,
+      expires: Date.now() + 10 * 60 * 1000, 
     };
 
     try {
       await sendVerificationEmail(email, verificationCode);
-      res
-        .status(200)
-        .json({ message: "Código de verificação enviado para o email" });
+      res.status(200).json({ message: "Codigo de verificação enviado para o email" });
     } catch (error) {
-      console.error("Erro ao enviar email:", error);
-      res
-        .status(500)
-        .json({
-          message: "Erro ao enviar o código de verificação",
-          error: (error as Error).message,
-        });
-    }
-  }
-);
-
-router.post(
-  "/register",
-  async (req: IUserRequest, res: Response): Promise<void> => {
-    const { name, email, password } = req.body;
-
-    if (!name || !email || !password) {
-      res
-        .status(400)
-        .json({ message: "Por favor, preencha todos os campos obrigatórios" });
-      return;
-    }
-
-    if (!verificationCodes[email]) {
-      res
-        .status(400)
-        .json({
-          message:
-            "Email não verificado. Por favor, envie um código de verificação primeiro.",
-        });
-      return;
-    }
-
-    try {
-      const hashedPassword = await bcrypt.hash(password, 10);
-      const user = await User.create({
-        name,
-        email,
-        password: hashedPassword,
-        isVerified: true,
+      res.status(500).json({
+        message: "Erro ao enviar o código de verificação",
       });
-      delete verificationCodes[email];
-    } catch (error: any) {
-      console.error("Erro ao criar usuário:", error);
-      res.status(500).json({ message: "Erro ao criar usurio" });
     }
   }
 );
@@ -119,7 +133,7 @@ router.post("/login", async (req: IUserRequest, res: Response): Promise<void> =>
   const { email, password } = req.body;
 
   try {
-    const user = await User.findOne({ where: { email } });
+    const user = await User.findOne({ where: { email: email.toLowerCase() } });
     if (!user) {
       res.status(401).json({ message: "Usuario não encontrado" });
       return;
@@ -148,7 +162,6 @@ router.post("/login", async (req: IUserRequest, res: Response): Promise<void> =>
 
     res.json({ token });
   } catch (error) {
-    console.error("Erro no login:", error);
     res.status(500).json({ message: "Erro no login" });
   }
 });
